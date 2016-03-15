@@ -1,0 +1,18 @@
+Implementation details:
+
+So far we only see application layer packets associated with a specific port number.  Here we are dealing with ARP and ICMP which iS NOT application layer.  We would never see these packets with what we were using before. So we need to do things differently.
+
+Create the socket:
+
+socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))
+
+This creates a "packet socket"... instead of recieving TCP or UDP on specific port we say we want to recieve everything having to do with a specific protocol. 
+
+SOCK_RAW:  Says I want ALL of the bytes of the packet.
+
+ETH_P_ALL:  Just give me everything
+
+This gives us a lot of flexibility but do this unless we have root permissions.  So we are going to program on a VM instead of our real computers. 
+
+
+ssh -Y 
