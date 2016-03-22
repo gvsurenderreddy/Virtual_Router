@@ -30,7 +30,7 @@
 #define R2_TABLE 2
 #define TABLE_ROWS 6
 #define TABLE_COLS 3
-#define BUF_SIZE 50
+#define BUF_SIZE 150
 
 using namespace std;
 
@@ -202,7 +202,46 @@ void fill_table(vector<struct routing_column>& table){
 	}
 
 }	
+uint16_t ip_calc_checksum(void* vdata,size_t length) {
+    // Cast the data pointer to one that can be indexed.
+    char* data=(char*)vdata;
 
+    // Initialise the accumulator.
+    uint32_t acc=0xffff;
+
+    // Handle complete 16-bit blocks.
+    for (size_t i=0;i+1<length;i+=2) {
+        uint16_t word;
+        memcpy(&word,data+i,2);
+        acc+=ntohs(word);
+        if (acc>0xffff) {
+            acc-=0xffff;
+        }
+    }
+
+    // Handle any partial block at the end of the data.
+    if (length&1) {
+        uint16_t word=0;
+        memcpy(&word,data+length-1,1);
+        acc+=ntohs(word);
+        if (acc>0xffff) {
+            acc-=0xffff;
+        }
+    }
+
+    // Return the checksum in network byte order.
+    return htons(~acc);
+}
+
+
+/*unsigned short icmp_calc_checksum(struct icmp_hdr *icmp, int n){
+	unsigned short sum = 0;
+	int i;
+	for(i=0; i<n; i++)
+		sum += (unsigned short)* (icmp+i);
+
+	return ~sum;
+}*/
 
 
 int main(){
@@ -362,20 +401,25 @@ int main(){
 
 			char new_ip[4];
 			j=0;
+			printf("\n%s\n",router_ip);
+			printf("IPADDR: ");
 			for(i=0; i<sizeof(router_ip); i++){		
 				if(router_ip[i] != '.'){
-					printf("%c", (unsigned char) router_ip[i]);
+					if(i==1)
+						continue;					
 					new_ip[j] = atoi(&router_ip[i]);
+					printf("%02x ", (unsigned char) new_ip[j]);
 					j++;
 				}
 			}
+			printf("\n");
 
 			memcpy(&arp.spa, new_ip , 4);
 			arp.oper = htons(OPER_REPLY);
-			print_eth(eth);
-			print_arp(arp);
+			//print_eth(eth);
+			//print_arp(arp);
 			push_arp(arp, eth, buf, eth_size);
-			send(packet_socket, buf, BUF_SIZE, 0);
+			send(packet_socket, buf, n, 0);
 		}
 		else if(htons(eth._type) == ICMP_TYPE){
 			//Determine Size of Ethernet Header
@@ -393,11 +437,15 @@ int main(){
 
 			//Construct IP header
 			//Set correct IP adresses in IP header
+			ip.checksum = 0;
+			ip.checksum = ip_calc_checksum(&ip, 20);
 			memcpy(&ip.dst_addr, &ip.src_addr, 4);
 			char new_ip[4];
 			j=0;
 			for(i=0; i<sizeof(router_ip); i++){		
 				if(router_ip[i] != '.'){
+					if(i==1)
+						continue;
 					printf("%c", (unsigned char) router_ip[i]);
 					new_ip[j] = atoi(&router_ip[i]);
 					j++;
@@ -405,12 +453,16 @@ int main(){
 			}
 			memcpy(&ip.src_addr, new_ip , 4);
 
+
 			//Construct ICMP header
+			icmp.checksum = 0;
+			icmp.checksum = ip_calc_checksum(&icmp, 64);
 			icmp._type = 0;
+			
 
 			push_icmp(icmp, ip, eth, buf, eth_size);
 			print_ip(ip);
-			send(packet_socket, buf, BUF_SIZE, 0);
+			send(packet_socket, buf, n, 0);
 		}
 
 		
