@@ -99,3 +99,80 @@ sudo dhclient eth1
 
 *command to copy file 
 scp prj3-net.py mininet@192.168.56.101:~/router
+
+
+	Linked list:
+
+	lo eth0 eth0 eth0 eth1 eth1 eth1
+
+	recieve message... contains IP address... but it might not be us
+
+	Ethernet header: put in correct source and destination
+	- dst MAC address
+	- src MAC
+	-type
+
+	ARP
+	- opcode 
+	- src ip
+	- src mac
+	- target ip
+	- target mac
+
+
+	When I get the request, the dst is going to broadcast so a swap wont work
+	-I need to get my own MAC address... use getidfaddrs()... returns linked list
+
+	ifaddrs is a linked list with pointers to go through the members of the list
+	we care about ifa_name and ifa_addr
+	name says eth0, eth1 and so on
+	we get three entries with the same name with different addresses
+	address is struct sockaddr
+		-this has member safamily
+			-AF_INET
+			-AF_INET6
+			-AF_PACKET
+			-the value of safamily tells us the value of the address that we really have
+			-once we know what type it is, we cast it to the appropriate thing
+		-Cast as struct sockaddr_in which contains sin_addr
+		-If it's AF_PACKET cast as struct sockaddr_ll which contains our ethernet address
+
+	1. go throuhg linked list
+	2. find address
+	3. 
+
+Part 2
+
+
+	GET PACKET
+
+	First thing we want to check:
+		Are we the destination of this packet?
+			-If so we are done... no forwarding
+			-If not, 
+				-is checksum correct?
+					-No: Drop Packet
+					-Yes: 
+				-is TTL > 1
+					-No: Drop and send ICMP error message
+					-Yes: decrement ttl and fix checksum
+				-Check forwarding table
+					-If no match(DST IPaddr in packet does not match prefixes on first 24 bits: Send ICMP error message 
+					-Yes: Find destination MAC address using ARP
+						-Target IP address that im arping for depends on what we found in the table
+						-dash means router is directly connected to the network IPaddr
+							-Send ARP request for MAC address directly
+						-Next hop IP address
+							-We need to ARP for this IP address
+				-Assemble the packet, send it
+				-If we don't get a response from an ARP request we conclude that Destination does not exist
+
+				*Change preferences in wireshark to validate the checksum's
+
+		For Testing Part 2:
+			ping (one host from another host)
+			traceroute
+			netcat
+				-sends over network whatever data we send on command line
+				netcat -l port                netcat ip port 
+

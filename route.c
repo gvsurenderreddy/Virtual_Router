@@ -14,17 +14,20 @@
 #include <stdint.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <algorithm>
 
 
 
-#define ETH_HTYPE 1
-#define IPV4_PTYPE 2048
+#define ETH_HTYPE 256
+#define IPV4_PTYPE 8
 #define ETHER_HLEN 6
+#define IP_HDR_LEN 20
+#define ETH_HDR_LEN 14
 #define IPV4_PLEN 4
-#define OPER_REQUEST 1
+#define OPER_REQUEST 256
 #define OPER_REPLY 2
 #define ARP_SIZE 28
-#define ARP_TYPE 2054
+#define ARP_TYPE 1544
 #define ICMP_TYPE 2048
 #define R1_TABLE 1
 #define R2_TABLE 2
@@ -78,12 +81,15 @@ typedef struct ip_hdr{
 
 typedef struct routing_column{
 	string net_prefix;
+	//uint8_t num_bits;
 	string hop_addr;
 	string interface;
 }routing_column;
 
+
 void print_ip(ip_hdr& ip){
 	int i;
+	printf("\n\nIP HEADER\n\n");
 	printf("Version: %02x\n",ip.version);
 	printf("ihl: %02x\n",ip.ihl);
 	printf("DSCB: %02x\n",ip.dscb);
@@ -95,11 +101,11 @@ void print_ip(ip_hdr& ip){
 	printf("Checksum: %02x\n",ip.checksum);
 	printf("SRC: ");
 	for(i=0; i<4; i++){
-		printf("%02x", (unsigned char) ip.src_addr[i]);
+		printf("%02x ", (unsigned char) ip.src_addr[i]);
 	}
 	printf("\nDST: ");
 	for(i=0; i<4; i++){
-		printf("%02x", (unsigned char) ip.dst_addr[i]);
+		printf("%02x ", (unsigned char) ip.dst_addr[i]);
 	}
 }
 
@@ -118,15 +124,31 @@ void print_eth(eth_hdr& eth){
 	}
 	printf("\n");
 
-	cout << "Type: " << (unsigned char)eth._type << endl;
+	printf("Type: %02x\n", eth._type);	
 }
 
 void print_arp(arp_hdr& arp){
 	int i;
 	cout << endl << endl << "ARP HEADER" << endl << endl;
+	printf("HTYPE: %02x\n", arp.htype);
+	printf("PTYPE: %02x\n", arp.ptype);
+	printf("HLEN: %02x\n", arp.hlen);
+	printf("PLEN: %02x\n", arp.plen);
+	printf("OPERATION: %02x\n", arp.oper);
+
+	cout << "Sender MAC Address: ";
+	for(i=0; i<6; i++){
+		printf("%02x ", (unsigned char)arp.sha[i] );
+	}
+	printf("\n");
 	cout << "Sender IP Address: ";
 	for(i=0; i<4; i++){
 		printf("%02x ", (unsigned char)arp.spa[i] );
+	}
+	printf("\n");
+	cout << "Target MAC Address: ";
+	for(i=0; i<6; i++){
+		printf("%02x ", (unsigned char)arp.tha[i] );
 	}
 	printf("\n");
 	cout << "Target IP Address: ";
@@ -157,6 +179,14 @@ void pull_arp(arp_hdr& arp, char* buf, int eth_size){
 
 void pull_ip(ip_hdr& ip, char* buf, int eth_size){
 	memcpy(&ip, &buf[eth_size], 20);
+	/*uint8_t temp;
+	temp = ip.version;
+	ip.version = ip.ihl;
+	ip.ihl = temp;
+	ip.total_length = htons(ip.total_length);
+	ip.id = htons(ip.id);
+	ip.frag_offset = htons(ip.frag_offset);
+	ip.checksum = htons(ip.checksum);*/
 }
 
 void pull_icmp(icmp_hdr& icmp, char* buf, int eth_size){
@@ -169,6 +199,10 @@ void push_arp(arp_hdr& arp, eth_hdr& eth, char* buf, int eth_size){
 	memcpy(&buf[eth_size], &arp, 28);
 }
 
+void push_eth(eth_hdr eth, char* buf){
+	memcpy(buf, &eth, ETH_HDR_LEN);
+}
+
 void push_icmp(icmp_hdr& icmp, ip_hdr& ip, eth_hdr& eth, char* buf, int eth_size){
 	memset(buf, 0, BUF_SIZE);
 	memcpy(buf, &eth, eth_size);
@@ -178,13 +212,22 @@ void push_icmp(icmp_hdr& icmp, ip_hdr& ip, eth_hdr& eth, char* buf, int eth_size
 
 
 
-void fill_table(vector<struct routing_column>& table){
-	int i, j, k;
+void fill_table(vector<struct routing_column>& table, int router_num){
+	int i, j, k, l, m, n;
+
 	string cell;
 	vector<string> elements;
 	routing_column col;
+	const char* fp;
 	//if(type == R1_TABLE){
-	ifstream file ("r1_table.txt");
+	if(router_num == 1){
+		fp = "r1_table.txt";
+	}
+	else{
+		fp = "r2_table.txt";
+	}
+
+	ifstream file (fp);
 
 	if(file.is_open()){
 		while(file >> cell){
@@ -199,6 +242,14 @@ void fill_table(vector<struct routing_column>& table){
 	}
 	else{
 		printf("\nError reading routing table\n");
+	}
+
+	for(i=0; i<table.size(); i++){
+		table[i].net_prefix.erase(std::remove(table[i].net_prefix.begin(), table[i].net_prefix.end(), '.'), table[i].net_prefix.end());
+	}
+
+	for(i=0; i<table.size(); i++){
+		table[i].hop_addr.erase(std::remove(table[i].hop_addr.begin(), table[i].hop_addr.end(), '.'), table[i].hop_addr.end());
 	}
 
 }	
@@ -234,6 +285,8 @@ uint16_t ip_calc_checksum(void* vdata,size_t length) {
 }
 
 
+
+
 /*unsigned short icmp_calc_checksum(struct icmp_hdr *icmp, int n){
 	unsigned short sum = 0;
 	int i;
@@ -245,8 +298,11 @@ uint16_t ip_calc_checksum(void* vdata,size_t length) {
 
 
 int main(){
+	int sock[4] = {0,0,0,0};
+	//int sock3;
 	int packet_socket;
-	int eth_size;
+	int router_num = 1;
+	int eth_size = 14;
 	arp_hdr arp;
 	eth_hdr eth;
 	ip_hdr ip;
@@ -255,11 +311,30 @@ int main(){
 	uint16_t temp2;
 	sockaddr_in *sa;
 	char *router_ip;
+	char *router_ip0;
+	char *router_ip1;
+	char *router_ip2;
+	char *router_ip3;
 	char macp[6];
+	char mac0[6];
+	char mac1[6];
+	char mac2[6];
+	char mac3[6];
+	char packet[BUF_SIZE];
+	int packet_length;
 	struct sockaddr_ll *s;
 	int i;
 	int j = 0;
 	vector<struct routing_column> routing_table;
+
+
+	char *result;
+	router_ip0 = (char*)malloc(16);
+	router_ip1 = (char*)malloc(16);
+	router_ip2 = (char*)malloc(16);
+	router_ip3 = (char*)malloc(16);
+
+
 	//get list of interfaces (actually addresses)
 	struct ifaddrs *ifaddr, *tmp;
 	if(getifaddrs(&ifaddr)==-1){
@@ -276,19 +351,95 @@ int main(){
 		if(tmp->ifa_addr->sa_family==AF_PACKET){		
 
 			//create a packet socket on interface r?-eth1
-			if(!strncmp(&(tmp->ifa_name[3]),"eth1",4)){
+			//if(!strncmp(&(tmp->ifa_name[3]),"eth1",4)){
 				printf("Interface: %s\n",tmp->ifa_name);
 				printf("Creating Socket on interface %s\n",tmp->ifa_name);
 
-				//Harvest MAC address
-				s = (struct sockaddr_ll *)tmp->ifa_addr;
-				
-	            int len = 0;
-	            for(i = 0; i < 6; i++)
-	                macp[i] = s->sll_addr[i];
+					
+				if(!strcmp(tmp->ifa_name,"r2-eth1")){
+					printf("\nUsing R2\n");
+					router_num = 2;	
+						
+	        	}
+
+		        //r1-eth0
+		        if(!strncmp(&(tmp->ifa_name[3]),"eth0",4)){
+		        	sock[0] = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+					if(sock[0]<0){
+						perror("socket");
+						return 2;
+					}
+
+					if(bind(sock[0],tmp->ifa_addr,sizeof(struct sockaddr_ll))==-1){
+						perror("bind");
+					}
+					//Harvest MAC address
+					s = (struct sockaddr_ll *)tmp->ifa_addr;
+		            int len = 0;
+		            for(i = 0; i < 6; i++)
+		                mac0[i] = s->sll_addr[i];
+		        }
+
+		        //r?-eth1
+		        if(!strncmp(&(tmp->ifa_name[3]),"eth1",4)){
+		        	sock[1] = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+					if(sock[1]<0){
+						perror("socket");
+						return 2;
+					}
+
+					if(bind(sock[1],tmp->ifa_addr,sizeof(struct sockaddr_ll))==-1){
+						perror("bind");
+					}
+
+					//Harvest MAC address
+					s = (struct sockaddr_ll *)tmp->ifa_addr;
+		            int len = 0;
+		            for(i = 0; i < 6; i++)
+		                mac1[i] = s->sll_addr[i];
+		        }
+
+		        //r?-eth2
+		        if(!strncmp(&(tmp->ifa_name[3]),"eth2",4)){
+		        	sock[2] = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+					if(sock[2]<0){
+						perror("socket");
+						return 2;
+					}
+
+					if(bind(sock[2],tmp->ifa_addr,sizeof(struct sockaddr_ll))==-1){
+						perror("bind");
+					}
+
+					//Harvest MAC address
+					s = (struct sockaddr_ll *)tmp->ifa_addr;
+		            int len = 0;
+		            for(i = 0; i < 6; i++)
+		                mac2[i] = s->sll_addr[i];
+		        }
+
+		        //r?-eth3
+		        if(!strncmp(&(tmp->ifa_name[3]),"eth3",4)){
+		        	sock[3] = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+					if(sock[3]<0){
+						perror("socket");
+						return 2;
+					}
+
+					if(bind(sock[3],tmp->ifa_addr,sizeof(struct sockaddr_ll))==-1){
+						perror("bind");
+					}
+
+					//Harvest MAC address
+					s = (struct sockaddr_ll *)tmp->ifa_addr;
+		            int len = 0;
+		            for(i = 0; i < 6; i++)
+		                mac3[i] = s->sll_addr[i];
+		        }
+	
 	
 				
-				//create a packet socket
+				/*//create a packet socket
 				//AF_PACKET makes it a packet socket
 				//SOCK_RAW makes it so we get the entire packet
 				//could also use SOCK_DGRAM to cut off link layer header
@@ -308,19 +459,47 @@ int main(){
 				
 				if(bind(packet_socket,tmp->ifa_addr,sizeof(struct sockaddr_ll))==-1){
 					perror("bind");
-				}
-			}
+				}*/
+			//}
 		}
 
+		//Harvest our IP address's
 		if(tmp->ifa_addr->sa_family==AF_INET){
-			if(!strncmp(&(tmp->ifa_name[3]),"eth1",4)){
+			if(!strncmp(&(tmp->ifa_name[3]),"eth0",4)){
+				printf("\nin 0\n");
 				sa = (struct sockaddr_in *) tmp->ifa_addr;
-				router_ip = inet_ntoa(sa->sin_addr);
-				printf("IP addr: %s\n", router_ip);
+				result = inet_ntoa(sa->sin_addr);
+				strcpy(router_ip0 , result);
+				printf("IP addr0: %s\n", router_ip0);
 			}
+			else if(!strncmp(&(tmp->ifa_name[3]),"eth1",4)){
+				printf("\nin 1\n");
+				sa = (struct sockaddr_in *) tmp->ifa_addr;
+				result = inet_ntoa(sa->sin_addr);
+				strcpy(router_ip1 , result);
+				printf("IP addr1: %s\n", router_ip1);
+			}
+			else if(!strncmp(&(tmp->ifa_name[3]),"eth2",4)){
+				printf("\nin 2\n");
+				sa = (struct sockaddr_in *) tmp->ifa_addr;
+				result = inet_ntoa(sa->sin_addr);
+				strcpy(router_ip2 , result);
+				printf("IP addr2: %s\n", router_ip2);
+			}
+			if(!strncmp(&(tmp->ifa_name[3]),"eth3",4)){
+				printf("\nin 3\n");
+				sa = (struct sockaddr_in *) tmp->ifa_addr;
+				result = inet_ntoa(sa->sin_addr);
+				strcpy(router_ip3 , result);
+				printf("IP addr: %s\n", router_ip3);
+			}
+
 		}
+		//printf("IP addr1: %s\n", router_ip1);
 	}
 	//free the interface list when we don't need it anymore
+	
+
 	freeifaddrs(ifaddr);
 
 	//loop and recieve packets. We are only looking at one interface,
@@ -329,46 +508,245 @@ int main(){
 	//see which ones have data)
 
 	//Variables used in loop
+
+	fill_table(routing_table, router_num);
+
+	//Print Routing Table
+	
+	for(int i=0; i<routing_table.size(); i++){
+		cout << routing_table[i].net_prefix << " ";
+		cout << routing_table[i].hop_addr << " ";
+		cout << routing_table[i].interface << endl;
+	}
 	
 
-	printf("Ready to recieve now\n");
+
+
+	//FD_SET(sock3, &sockets);
 	
+	fd_set sockets;
+	printf("Ready to recieve now\n");
 
 
 	while(1){
 		char buf[BUF_SIZE];
 		memset(buf, 0, BUF_SIZE);
+		//memset(packet, 0, BUF_SIZE);
+		bool sent_flag = false;
+		int active_socket;
 		struct sockaddr_ll recvaddr;
+		int interface;
 		unsigned int recvaddrlen=sizeof(struct sockaddr_ll);
 		//we can use recv, since the addresses are in the packet, but we
 		//use recvfrom because it gives us an easy way to determine if
 		//this packet is incoming or outgoing (when using ETH_P_ALL, we
 		//see packets in both directions. Only outgoing can be seen when
 		//using a packet socket with some specific protocol)
-		int n = recvfrom(packet_socket, buf, 1500,0,(struct sockaddr*)&recvaddr, &recvaddrlen);
+		int n;
+		
+		/*n = recvfrom(sock[2], buf, 1500,0,(struct sockaddr*)&recvaddr, &recvaddrlen);
+		printf("\nrecieved\n");
+		print_buf(buf);*/
+		FD_ZERO(&sockets);
+		int maxsock=0;
+		int num_socks = router_num+2;
+		for(i=0; i<num_socks; i++){
+			//printf("%d: %d\n",i, sock[i]);
+			FD_SET(sock[i], &sockets);
+			if(sock[i] > maxsock) maxsock = sock[i];
+		}
+		//printf("\nBefore select: %s\n", router_ip1);
+		select(maxsock+1, &sockets, NULL, NULL, NULL);
+		printf("\n\n\nSocket selected\n");
+		for(i=0; i<FD_SETSIZE; i++){
+	  		//Check for connected sockets
+	  		if(FD_ISSET(i, &sockets)){
+	  			printf("Recieving packet from socket %d\n", i);
+	  			active_socket = i;
+				n = recvfrom(active_socket, buf, 1500,0,(struct sockaddr*)&recvaddr, &recvaddrlen);
+			}
+		}
+		//printf("\nAfter Select: %s\n", router_ip1);
+		
+		if(active_socket == sock[0]){
+			router_ip = router_ip0;
+			memcpy(macp, mac0, 6);
+		}
+		if(active_socket == sock[1]){
+			router_ip = router_ip1;
+			memcpy(macp, mac1, 6);
+		}
+		if(active_socket == sock[2]){
+			router_ip = router_ip2;
+			memcpy(macp, mac2, 6);
+		}
+		if(active_socket == sock[3]){
+			router_ip = router_ip3;
+			memcpy(macp, mac3, 6);
+		}
+	
+			
 		//ignore outgoing packets (we can't disable some from being sent
 		//by the OS automatically, for example ICMP port unreachable
 		//messages, so we will just ignore them here)
+		
 		if(recvaddr.sll_pkttype==PACKET_OUTGOING)
 			continue;
 		//start processing all others
-		printf("\n\n\nGot a %d byte packet\n", n);
+		printf("\nGot a %d byte packet\n", n);
 
 		//what else to do is up to you, you can send packets with send,
 		//just like we used for TCP sockets (or you can use sendto, but it
 		//is not necessary, since the headers, including all addresses,
 		//need to be in the buffer you are sending)
 		
+		char new_ip[4];
+			j=0;
+			//printf("\n%s\n",router_ip);
+			//printf("IPADDR: ");
+			for(i=0; i<sizeof(router_ip); i++){		
+				if(router_ip[i] != '.'){
+					if(i==1)
+						continue;					
+					new_ip[j] = atoi(&router_ip[i]);
+					//printf("%02x ", (unsigned char) new_ip[j]);
+					j++;
+				}
+			}
 
+	
+
+		pull_eth(eth, buf, eth_size);
+		print_eth(eth);
+		pull_ip(ip, buf, eth_size);
+		print_ip(ip);
+		/*for(i=0; i<6; i++){
+			printf("%02x ", (unsigned char)mac1[i]);
+		}
+		printf("String compare: %d", strncmp(eth.dst_addr, mac1, 6));*/
+		//Are we the destination of this packet? 
+		if(strcmp(ip.dst_addr, new_ip) != 0 && eth._type != ARP_TYPE){
+			//if(strncmp(eth.dst_addr, mac1, 6) != 0 && eth.dst_addr[0] != 255){
+				//If not...
+				printf("\nRecieved packet that is not for us\n");
+				//First store a copy of the packet
+				memcpy(packet, buf, n);
+				packet_length = n;
+
+				//Is checksum correct?
+				//pull_ip(ip, buf, eth_size);
+				//print_ip(ip);
+				printf("\n\nChecksum Recieved: %d\n", ip.checksum);
+				printf("Checksum Calculated: %d\n", ip_calc_checksum(&ip, IP_HDR_LEN));
+				if(ip.checksum != ip_calc_checksum(&ip, IP_HDR_LEN)){
+					
+					printf("Packet Dropped: Incorrect Checksum\n");
+					//Send ICMP error message
+				}
+				else{
+					//Decrement TTL
+					//Fix checksum
+				}
+				//string dst_ip = string(ip.dst_addr, 3); 
+				//routing_table[i].net_prefix.c_str();
+				char net_pre[4];
+				char hop_ip[4];
+				int flag=0;
+				//Check Forwarding Table
+				for(i=0; i<routing_table.size(); i++){
+
+					
+					//Hack Job to make strings comparable
+					for(j=0; j<5; j++){
+						if(j == 1){
+							flag = 1;
+							continue;
+						}
+						net_pre[j-flag] = routing_table[i].net_prefix[j]-48;
+					}
+					net_pre[0] += 9;
+					flag=0;
+
+					//Hack Job to make strings comparable
+					for(j=0; j<5; j++){
+						if(j == 1){
+							flag = 1;
+							continue;
+						}
+						hop_ip[j-flag] = routing_table[i].hop_addr[j]-48;
+					}
+					hop_ip[0] += 9;
+					flag=0;
+
+					if(strncmp(ip.dst_addr, net_pre, 3)== 0){
+						//We have a match!
+						printf("\n\nMATCH!\n\n");
+						arp.htype = ETH_HTYPE;
+
+						arp.ptype = IPV4_PTYPE;
+						
+						arp.hlen = ETHER_HLEN;
+						
+						arp.plen = IPV4_PLEN;
+						
+						arp.oper = OPER_REQUEST;
+						memcpy(&arp.sha, mac1, 6);
+						memcpy(&arp.spa, new_ip, 4);
+						memset(&arp.tha, 0, 6);
+						if(strcmp(routing_table[i].hop_addr.c_str(), "-") == 0){
+							//Router is directly connected to the netowrk IPaddr
+							//Send ARP request for MAC address directly
+							memcpy(&arp.tpa, ip.dst_addr, 4);
+						}
+						else{
+							//Send ARP request for next hop IP address		
+							memcpy(&arp.tpa, hop_ip, 4);
+							//Send ARP request to find ethernet address
+						}
+						//Build Ethernet Header
+						//Broadcast destination
+						memset(&eth.dst_addr, 0xFF, 6);
+						//Set our MAC address as the source
+						memcpy(&eth.src_addr, mac1, 6);	
+						eth._type = ARP_TYPE;
+
+						//Push to buffer and send
+						push_arp(arp, eth, buf, ETH_HDR_LEN);
+						//determine interface from routing table
+						
+						if(strcmp(routing_table[i].interface.c_str(), "r1-eth0") == 0 || strcmp(routing_table[i].interface.c_str(), "r2-eth0") ==0){
+							interface = sock[0];
+						}
+						else if(strcmp(routing_table[i].interface.c_str(), "r1-eth1") == 0 || strcmp(routing_table[i].interface.c_str(), "r2-eth1") ==0){
+							interface = sock[1];
+						}
+						else if(strcmp(routing_table[i].interface.c_str(), "r1-eth2") == 0 || strcmp(routing_table[i].interface.c_str(), "r2-eth2") ==0){
+							interface = sock[2];
+						}
+						else{
+							interface = sock[3];
+						}
+						printf("\nSending ARP request on Interface: %d", interface);
+						send(interface, buf, 42, 0);
+						sent_flag = true;
+
+					}
+					else{
+						//No matches
+						//Send ICMP error message
+					}
+				}
+
+				//print_arp(arp);
+				if(sent_flag)
+					continue;
+			//}
+		}
 
 		
 
-		pull_eth(eth, buf, 14);
-
-		printf("\nType: %x\n", eth._type);	
-
-		if(htons(eth._type) == ARP_TYPE){
-			printf("\nARP\n");
+		if(eth._type == ARP_TYPE){
+			printf("\nRecieved ARP for us\n");
 
 			//Determine Size of Ethernet Header
 			eth_size = n - ARP_SIZE;
@@ -377,54 +755,42 @@ int main(){
 			//print_buf(buf);
 			//print_eth(eth);
 			//print_arp(arp);
+			if(arp.oper == OPER_REQUEST){
+				//Reply to MAC address where message came from
+				memcpy(&eth.dst_addr, &eth.src_addr, 6);
+				//Set our MAC address as the source
+				memcpy(&eth.src_addr, mac1, 6);	
 
-			fill_table(routing_table);
+				memcpy(&arp.tha, &arp.sha, 6);
 
-			//Print Routing Table
-			/*
-			for(int i=0; i<routing_table.size(); i++){
-				cout << routing_table[i].net_prefix << " ";
-				cout << routing_table[i].hop_addr << " ";
-				cout << routing_table[i].interface << endl;
-			}*/	
+				memcpy(&arp.sha, mac1, 6);
 
-			//Reply to MAC address where message came from
-			memcpy(&eth.dst_addr, &eth.src_addr, 6);
-			//Set our MAC address as the source
-			memcpy(&eth.src_addr, macp, 6);	
+				memcpy(&arp.tpa, &arp.spa, 4);
 
-			memcpy(&arp.tha, &arp.sha, 6);
-
-			memcpy(&arp.sha, macp, 6);
-
-			memcpy(&arp.tpa, &arp.spa, 4);
-
-			char new_ip[4];
-			j=0;
-			printf("\n%s\n",router_ip);
-			printf("IPADDR: ");
-			for(i=0; i<sizeof(router_ip); i++){		
-				if(router_ip[i] != '.'){
-					if(i==1)
-						continue;					
-					new_ip[j] = atoi(&router_ip[i]);
-					printf("%02x ", (unsigned char) new_ip[j]);
-					j++;
-				}
+				memcpy(&arp.spa, new_ip , 4);
+				arp.oper = htons(OPER_REPLY);
+				//print_eth(eth);
+				//print_arp(arp);
+				push_arp(arp, eth, buf, eth_size);
+				printf("\nSending ARP reply on %d\n", active_socket);
+				send(active_socket, buf, n, 0);
 			}
-			printf("\n");
+			//handle reply
+			else{
+				//Update Hardware address
+				memcpy(packet, &arp.sha, 6);
+				//Send Packet
+				printf("\nForwarding Packet on %d\n", interface);
+				printf("Packet Length %d\n", packet_length);
+				send(interface, packet, packet_length, 0);
+				memset(packet, 0, BUF_SIZE);
+			}
 
-			memcpy(&arp.spa, new_ip , 4);
-			arp.oper = htons(OPER_REPLY);
-			//print_eth(eth);
-			//print_arp(arp);
-			push_arp(arp, eth, buf, eth_size);
-			send(packet_socket, buf, n, 0);
 		}
 		else if(htons(eth._type) == ICMP_TYPE){
 			//Determine Size of Ethernet Header
 			
-			printf("\nICMP\n");
+			printf("\nRecieved ICMP for us\n");
 			eth_size = 14;
 			pull_ip(ip, buf, eth_size);
 			pull_icmp(icmp, buf, eth_size);
@@ -433,24 +799,24 @@ int main(){
 			//Reply to MAC address where message came from
 			memcpy(&eth.dst_addr, &eth.src_addr, 6);
 			//Set our MAC address as the source
-			memcpy(&eth.src_addr, macp, 6);
+			memcpy(&eth.src_addr, mac1, 6);
 
 			//Construct IP header
 			//Set correct IP adresses in IP header
 			ip.checksum = 0;
 			ip.checksum = ip_calc_checksum(&ip, 20);
 			memcpy(&ip.dst_addr, &ip.src_addr, 4);
-			char new_ip[4];
-			j=0;
-			for(i=0; i<sizeof(router_ip); i++){		
+			//char new_ip[4];
+			//j=0;
+			/*for(i=0; i<sizeof(router_ip); i++){		
 				if(router_ip[i] != '.'){
 					if(i==1)
 						continue;
-					printf("%c", (unsigned char) router_ip[i]);
+					//printf("%c", (unsigned char) router_ip[i]);
 					new_ip[j] = atoi(&router_ip[i]);
 					j++;
 				}
-			}
+			}*/
 			memcpy(&ip.src_addr, new_ip , 4);
 
 
@@ -461,12 +827,16 @@ int main(){
 			
 
 			push_icmp(icmp, ip, eth, buf, eth_size);
-			print_ip(ip);
-			send(packet_socket, buf, n, 0);
+			printf("\nSending ICMP reply on %d\n", active_socket);
+			send(active_socket, buf, n, 0);
 		}
 
 		
 	}
 	//exit
+	free(router_ip0);
+	free(router_ip1);
+	free(router_ip2);
+	free(router_ip3);
 	return 0;
 }
